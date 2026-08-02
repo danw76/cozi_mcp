@@ -9,6 +9,7 @@ import {
 } from '../cozi/index.js';
 import { parseIsoDateTime } from './parsers.js';
 import { slimAppt, type SlimAppointment } from './projections.js';
+import { expandAppointmentsForMonth } from './recurrence.js';
 import type { ToolAccessMode } from './index.js';
 import { toolResult } from './untrusted.js';
 
@@ -18,7 +19,11 @@ export async function getCalendarHandler(
   month: number,
 ): Promise<SlimAppointment[]> {
   const appts = await client.getCalendar(year, month);
-  return appts.map(slimAppt);
+  // Cozi returns a recurring series as a single master anchored at its original
+  // start day, not one item per occurrence. Expand recurring masters into their
+  // occurrences within (year, month) so every occurrence shows on its real day.
+  // Only the read path expands; update/delete still read the raw master.
+  return expandAppointmentsForMonth(appts, year, month).map(slimAppt);
 }
 
 export async function createAppointmentHandler(
