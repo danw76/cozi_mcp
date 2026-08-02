@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Self-hosted Streamable HTTP endpoint** (`dist/http-server.js`) for remote MCP
+  clients such as a ChatGPT Developer Mode custom connector. Serves `POST /mcp`
+  (stateless) and `GET /health`, and can be gated with either `MCP_BEARER_TOKEN`
+  (an `Authorization: Bearer` header) or `MCP_PATH_SECRET` (an unguessable path
+  segment, for clients that cannot send a header). Ships with a `Dockerfile` and
+  `railway.json`; see `docs/DEPLOY-RAILWAY.md`.
+
+### Fixed
+
+- **Recurring appointments now appear on every occurrence in a month.** Cozi
+  returns a recurring series as a single master item anchored at its original
+  start day (a weekly meeting still arrives dated to its first week; a holiday
+  arrives dated to the year it was created), so `get_calendar` previously showed
+  each recurring event only once — on the wrong day — or dropped it from months
+  other than its first. The read path now expands recurring masters into their
+  concrete occurrences within the queried month, covering weekly (incl. specific
+  weekdays and intervals), daily, monthly, and yearly rules — including
+  nth-weekday holidays (e.g. 3rd Monday of January), `end.untilDay`, and
+  `exdates`. The write paths (update/delete) still operate on the raw master, so
+  editing a recurring appointment continues to affect the series.
+
 ## [2.1.1] - 2026-07-30
 
 Diagnostics only — no change to the tool surface, the wire format, or the

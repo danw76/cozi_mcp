@@ -26,6 +26,7 @@ Node 20+/TypeScript MCP server that exposes Cozi Family Organizer (lists + calen
 
 - `src/server.ts` — `createServer({ config })` factory. Smithery default export. Per-credentials `Map<string, CoziClient>` cache so concurrent sessions stay isolated.
 - `src/bin.ts` — npx + MCPB stdio entry point (`#!/usr/bin/env node`). Reads `COZI_USERNAME`/`COZI_PASSWORD` env vars, instantiates `createServer`, pipes to `StdioServerTransport`.
+- `src/http-server.ts` — self-hosted Streamable HTTP entry point for remote clients (e.g. ChatGPT Developer Mode custom connectors). Serves `POST /mcp` (stateless, fresh `createServer` + `StreamableHTTPServerTransport` per request) and `GET /health`. Optional `MCP_BEARER_TOKEN` gate (`isAuthorized`, constant-time). Reads the same `COZI_*` env vars; binds `$PORT`/`HOST`. Built to `dist/http-server.js`; run via `npm run start:http`. Deploy config: `Dockerfile` + `railway.json`; see `docs/DEPLOY-RAILWAY.md`.
 - `src/instructions.ts` — `SERVER_INSTRUCTIONS` constant injected into the MCP server.
 - `src/cozi/` — Inlined Cozi HTTP client. **No separate npm package.** Cozi API access lives here.
   - `client.ts` — `CoziClient` class with 13 methods (auth + list/item/calendar CRUD).

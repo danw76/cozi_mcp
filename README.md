@@ -46,6 +46,25 @@ Add this to your Claude Desktop `claude_desktop_config.json` (or any other MCP c
 
 Requires Node 20+. The package will be downloaded on first run.
 
+### 4. Self-hosted HTTPS endpoint (for ChatGPT & other remote MCP clients)
+
+Run your own hosted Streamable HTTP endpoint — for example on Railway — and add it
+to **ChatGPT Developer Mode** as a custom connector. Your Cozi credentials live only
+as environment variables on infrastructure you control, never on a shared MCP host,
+and ChatGPT never sees them.
+
+```bash
+npm run build
+MCP_BEARER_TOKEN="$(openssl rand -hex 32)" \
+COZI_USERNAME=you@example.com COZI_PASSWORD='your-password' \
+  npm run start:http           # serves POST /mcp and GET /health on $PORT (default 8080)
+```
+
+The repo includes a `Dockerfile` and `railway.json` for one-click container hosting.
+See **[docs/DEPLOY-RAILWAY.md](docs/DEPLOY-RAILWAY.md)** for the full Railway + ChatGPT
+walkthrough, including the optional `MCP_BEARER_TOKEN` gate that protects the public
+endpoint.
+
 Set `COZI_READ_ONLY=true` to expose only read operations. In read-only mode, the server registers
 `family_members`, `get_lists`, `get_list_items`, and `get_calendar`; tools that create, update, or
 delete Cozi data are hidden from MCP clients. Omit the variable, or set it to any value other than
