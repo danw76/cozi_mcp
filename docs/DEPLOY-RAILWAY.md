@@ -40,7 +40,8 @@ transparent to the client.
 | --- | --- | --- |
 | `COZI_USERNAME` | ✅ | Your Cozi account email. |
 | `COZI_PASSWORD` | ✅ | Your Cozi account password. |
-| `MCP_BEARER_TOKEN` | strongly recommended | Shared secret. When set, every MCP request must send `Authorization: Bearer <token>`. Without it the endpoint is open to anyone who learns the URL. Generate with `openssl rand -hex 32`. |
+| `MCP_BEARER_TOKEN` | gate option 1 | Header gate. When set, every MCP request must send `Authorization: Bearer <token>`. Strongest option, but only for clients that can attach a static header. Generate with `openssl rand -hex 32`. |
+| `MCP_PATH_SECRET` | gate option 2 | Path gate for clients that **cannot** send a header (e.g. ChatGPT — see below). When set, the endpoint moves to `<MCP_PATH>/<secret>` and the bare base path 404s; clients connect with "No authentication" and the unguessable path is the credential. The bearer check is not additionally required. Generate with `openssl rand -hex 32`. |
 | `COZI_READ_ONLY` | optional | `true` to expose only read tools and hide create/update/delete. Default `false`. |
 | `MCP_PATH` | optional | Path the MCP endpoint is served at. Default `/mcp`. Make it unguessable as defense-in-depth if you can't use a bearer token. |
 | `PORT` | injected | Railway sets this automatically; the server binds to it (defaults to `8080` locally). |
@@ -116,27 +117,34 @@ https://<your-domain>.up.railway.app/mcp
 
 ## Add it to ChatGPT (Developer Mode)
 
-1. In ChatGPT: **Settings → Connectors → Advanced → Developer mode** (requires a
-   plan where custom connectors are available).
-2. **Create / Add custom connector** and enter:
-   - **Name:** e.g. `Cozi`
-   - **MCP Server URL:** `https://<your-domain>.up.railway.app/mcp`
-   - **Authentication:**
-     - If ChatGPT offers an **access-token / API-key** field, paste your
-       `MCP_BEARER_TOKEN` there (it is sent as `Authorization: Bearer <token>`,
-       which is exactly what the server checks). **Recommended.**
-     - If the only option is **No authentication**, you must leave
-       `MCP_BEARER_TOKEN` unset on the server, because ChatGPT won't send it. In
-       that case treat the URL as a secret and set an unguessable `MCP_PATH` —
-       and understand that anyone with the URL can reach your Cozi account.
-3. Save. ChatGPT runs the MCP handshake and lists the Cozi tools
-   (`family_members`, `get_lists`, `get_calendar`, `create_appointment`, …).
-4. In a chat, enable the connector and try: *"List my Cozi shopping list."*
+ChatGPT's custom-connector form only offers **OAuth** or **No authentication** —
+there is no field for a static bearer header, and "Mixed" just attempts OAuth
+discovery (which fails here with *"MCP server does not implement OAuth"*). So the
+working route is **No authentication + a path secret**:
 
-> **OAuth:** This server does not implement an OAuth authorization server. If
-> ChatGPT requires OAuth in your version and offers no token/no-auth path, that
-> route isn't supported here without additional work — use the bearer-token or
-> unguessable-URL path above.
+1. On the server, set **`MCP_PATH_SECRET`** to a long random value
+   (`openssl rand -hex 32`). The endpoint moves to
+   `https://<your-domain>.up.railway.app/mcp/<secret>` and the bare `/mcp` path
+   returns 404. (`MCP_BEARER_TOKEN` is not needed in this mode.)
+2. In ChatGPT: **Settings → Connectors → Advanced → Developer mode** (requires a
+   plan where custom connectors are available).
+3. **Create / Add custom connector** and enter:
+   - **Name:** e.g. `Cozi`
+   - **MCP Server URL:** `https://<your-domain>.up.railway.app/mcp/<secret>`
+     (the full path *including* the secret segment)
+   - **Authentication:** **No authentication**
+4. Save. ChatGPT runs the MCP handshake and lists the Cozi tools
+   (`family_members`, `get_lists`, `get_calendar`, `create_appointment`, …).
+5. In a chat, enable the connector and try: *"List my Cozi shopping list."*
+
+> **Security tradeoff:** a path secret is weaker than a header — URLs can leak
+> into proxy logs, browser history, and `Referer` headers. Treat the full URL
+> like a password: don't share it, and rotate `MCP_PATH_SECRET` if it leaks.
+> For clients that *can* send a header, prefer `MCP_BEARER_TOKEN` instead.
+
+> **OAuth:** This server does not implement an OAuth authorization server, so
+> ChatGPT's OAuth/"Mixed" options won't work — use the No-authentication +
+> path-secret route above.
 
 ---
 

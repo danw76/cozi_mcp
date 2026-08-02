@@ -22,19 +22,34 @@ const username = process.env.COZI_USERNAME ?? '';
 const password = process.env.COZI_PASSWORD ?? '';
 const readOnly = parseBooleanEnv(process.env.COZI_READ_ONLY);
 
-// Optional shared-secret gate on the HTTP endpoint. Unlike the stdio entries,
-// which trust the local user, this one is reachable by anyone who learns the
-// URL — and possession of the URL would otherwise mean full control of the
-// Cozi account. When MCP_BEARER_TOKEN is set, every request must carry
-// `Authorization: Bearer <token>`. Left unset, the endpoint is open (only
-// appropriate when some other layer restricts access); startup warns loudly.
+// Two independent ways to gate the endpoint. Unlike the stdio entries, which
+// trust the local user, this one is reachable by anyone who learns the URL —
+// and possession of the URL would otherwise mean full control of the Cozi
+// account.
+//
+// 1. MCP_BEARER_TOKEN — a header gate: every request must carry
+//    `Authorization: Bearer <token>`. The stronger option, but some clients
+//    (notably ChatGPT's custom-connector form, which only offers OAuth or
+//    "No authentication") can't attach a static header.
+//
+// 2. MCP_PATH_SECRET — a path gate: the MCP endpoint is served at
+//    `<MCP_PATH>/<secret>` instead of `<MCP_PATH>`, and the base path 404s.
+//    A client that can't send headers still connects with "No authentication"
+//    because the unguessable path segment is the credential. Weaker than a
+//    header (URLs leak into proxy logs, history, Referer), but effective when a
+//    header gate isn't possible. When set, the bearer check is not additionally
+//    required, so a header-less client works.
+//
+// If neither is set the endpoint is open; startup warns loudly.
 const bearerToken = process.env.MCP_BEARER_TOKEN ?? '';
+const pathSecret = process.env.MCP_PATH_SECRET ?? '';
 
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);
 const host = process.env.HOST ?? '0.0.0.0';
-// The path ChatGPT (or any client) points at. Kept configurable so the URL
-// can be made unguessable as defense-in-depth when no bearer token is used.
-const mcpPath = process.env.MCP_PATH ?? '/mcp';
+// The base path clients point at. Kept configurable; when MCP_PATH_SECRET is
+// set the live endpoint is `${mcpBasePath}/${secret}`.
+const mcpBasePath = (process.env.MCP_PATH ?? '/mcp').replace(/\/+$/, '') || '/mcp';
+const mcpEndpointPath = pathSecret ? `${mcpBasePath}/${pathSecret}` : mcpBasePath;
 
 function parseBooleanEnv(value: string | undefined): boolean {
   if (value === undefined) return false;
@@ -59,13 +74,22 @@ if (!username || !password) {
   );
 }
 
-if (!bearerToken) {
+if (!bearerToken && !pathSecret) {
   process.stderr.write(
-    'Cozi MCP: MCP_BEARER_TOKEN is not set — the HTTP endpoint is UNAUTHENTICATED. ' +
-      'Anyone who reaches this URL can read and modify the configured Cozi account. ' +
-      'Set MCP_BEARER_TOKEN to a long random secret and send it as ' +
-      '"Authorization: Bearer <token>", or ensure access is restricted another way.\n',
+    'Cozi MCP: neither MCP_BEARER_TOKEN nor MCP_PATH_SECRET is set — the HTTP ' +
+      'endpoint is UNAUTHENTICATED. Anyone who reaches this URL can read and ' +
+      'modify the configured Cozi account. Set MCP_BEARER_TOKEN (sent as ' +
+      '"Authorization: Bearer <token>") or MCP_PATH_SECRET (an unguessable path ' +
+      'segment for clients that cannot send headers), or restrict access another way.\n',
   );
+}
+
+/** Length-safe constant-time string comparison. */
+function secretsEqual(presentedValue: string, expected: string): boolean {
+  const presented = Buffer.from(presentedValue);
+  const secret = Buffer.from(expected);
+  if (presented.length !== secret.length) return false;
+  return timingSafeEqual(presented, secret);
 }
 
 /**
@@ -78,10 +102,20 @@ export function isAuthorized(authHeader: string | undefined, expected: string): 
   const match = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
   const token = match?.[1];
   if (!token) return false;
-  const presented = Buffer.from(token);
-  const secret = Buffer.from(expected);
-  if (presented.length !== secret.length) return false;
-  return timingSafeEqual(presented, secret);
+  return secretsEqual(token, expected);
+}
+
+/**
+ * Does this request path address the MCP endpoint? In path-secret mode the
+ * secret segment is checked in constant time here, so a correct path match *is*
+ * the authorization; the base path (without the secret) deliberately does not
+ * match, so it 404s like any unknown route and reveals nothing.
+ */
+export function matchesMcpEndpoint(pathname: string, basePath: string, secret: string): boolean {
+  if (!secret) return pathname === basePath;
+  const prefix = `${basePath}/`;
+  if (!pathname.startsWith(prefix)) return false;
+  return secretsEqual(pathname.slice(prefix.length), secret);
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -91,7 +125,11 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!isAuthorized(req.headers.authorization, bearerToken)) {
+  // In path-secret mode the caller already proved knowledge of the secret via
+  // the URL (matchesMcpEndpoint), so the bearer header is not additionally
+  // required — that's what lets a header-less client (ChatGPT "No auth")
+  // connect. Otherwise fall back to the bearer gate.
+  if (!pathSecret && !isAuthorized(req.headers.authorization, bearerToken)) {
     res.setHeader('WWW-Authenticate', 'Bearer');
     sendJson(res, 401, {
       jsonrpc: '2.0',
@@ -140,14 +178,16 @@ const httpServer = createHttpServer((req, res) => {
     return;
   }
 
-  if (url.pathname === mcpPath) {
+  if (matchesMcpEndpoint(url.pathname, mcpBasePath, pathSecret)) {
     void handleMcp(req, res);
     return;
   }
 
+  // Deliberately vague: in path-secret mode we must not confirm the base path
+  // or leak the expected location of the secret endpoint.
   sendJson(res, 404, {
     jsonrpc: '2.0',
-    error: { code: -32601, message: `Not found. MCP endpoint is ${mcpPath}` },
+    error: { code: -32601, message: 'Not found' },
     id: null,
   });
 });
@@ -156,10 +196,18 @@ const httpServer = createHttpServer((req, res) => {
 // pure helpers (isAuthorized) without binding a port.
 if (process.env.COZI_MCP_HTTP_NO_LISTEN !== '1') {
   httpServer.listen(port, host, () => {
+    // The secret segment is intentionally not logged; the path is shown as
+    // `${base}/<secret>` so operators can see the shape without the value.
+    const displayPath = pathSecret ? `${mcpBasePath}/<secret>` : mcpBasePath;
+    const authMode = pathSecret
+      ? 'path secret required'
+      : bearerToken
+        ? 'bearer token required'
+        : 'OPEN';
     process.stderr.write(
       `Cozi MCP HTTP server (v${SERVER_VERSION}) listening on ${host}:${port}, ` +
-        `MCP endpoint ${mcpPath} — mode: ${readOnly ? 'read-only' : 'read-write'}, ` +
-        `auth: ${bearerToken ? 'bearer token required' : 'OPEN'}.\n`,
+        `MCP endpoint ${displayPath} — mode: ${readOnly ? 'read-only' : 'read-write'}, ` +
+        `auth: ${authMode}.\n`,
     );
   });
 }
