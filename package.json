@@ -47,7 +47,9 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsx watch src/bin.ts",
+    "dev:http": "tsx watch src/http-server.ts",
     "start": "node dist/bin.js",
+    "start:http": "node dist/http-server.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

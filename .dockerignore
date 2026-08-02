@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.git
+.github
+*.mcpb
+*.env
+creds.env
+.env
+.env.*
+.DS_Store
+*.log
+.claude
+_to_delete
+cozi_mcp_VULNHUNT_RESULTS_*
