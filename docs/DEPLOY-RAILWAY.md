@@ -84,6 +84,26 @@ railway variables --set COZI_USERNAME=you@example.com \
 railway domain                     # generate the public HTTPS domain
 ```
 
+### Two gotchas worth knowing
+
+If you create the service through Railway's API/MCP (rather than the dashboard
+"Deploy from repo" button), Railway may default to its own builder (Nixpacks /
+Railpack) and **ignore `railway.json`**, booting `npm start` (the stdio entry)
+instead of the HTTP server — you'll see a `502 Application failed to respond`.
+Two settings make it deterministic:
+
+- **Force the Dockerfile builder + start command** on the service:
+  set its Dockerfile path to `Dockerfile` and its start command to
+  `node dist/http-server.js`. In the dashboard: service → **Settings → Build**
+  (Builder → Dockerfile) and **Settings → Deploy** (Custom Start Command).
+- **Pin the port.** Railway routes the public domain to the container's port.
+  If it can't detect it you'll get `502`/connection resets. Set a `PORT`
+  variable (e.g. `8080`, matching the Dockerfile's `EXPOSE`/`ENV PORT`) so the
+  app and the router agree, or set the domain's target port to `8080`.
+
+Also set the healthcheck path to `/health` (service → Settings → Deploy) so a
+deploy is only marked healthy once the app is actually serving.
+
 Your MCP endpoint is then:
 
 ```
